@@ -1,0 +1,73 @@
+$env:PATH = "D:\Qt2\Tools\CMake_64\bin;D:\Qt2\Tools\Ninja;" + `
+            "D:\Qt2\Tools\mingw1310_64\bin;D:\Qt2\6.11.1\mingw_64\bin;" + $env:PATH
+cmake --version
+g++ --version
+
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="D:/Qt2/6.11.1/mingw_64"
+cmake --build build
+
+.\build\NiBench.exe
+
+
+  Get-ChildItem "C:\Program Files (x86)\National Instruments\Shared\ExternalCompilerSupport\C" -Recurse -Include NIDAQmx.h,NIDAQmx.lib | Select-Object FullName
+  cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="D:/Qt2/6.11.1/mingw_64" -DNI_DAQMX_DIR="C:/Program Files (x86)/National Instruments/Shared/ExternalCompilerSupport/C"
+
+  ravo, elle compile et s’ouvre. Voici comment elle est faite et comment t’en servir.
+
+L’idée générale
+
+NiBench est un outil de diagnostic, pas un outil de mesure. Il répond à une seule question : est-ce que le PC voit chaque carte, et est-ce que j’arrive à lire ou écrire dessus ? Il n’y a ni calcul métier ni MLI complète. Si quelque chose marche ici, il y a de bonnes chances que ça marche dans la grosse IHM. Si ça échoue ici, l’erreur est plus facile à isoler.
+
+Comment le code est organisé
+
+Quatre fichiers, avec chacun un rôle :
+
+NiApi.cpp est le seul fichier qui parle à NI-DAQmx. Il contient des sessions simples : une entrée analogique, une sortie analogique, des lignes numériques. L’interface ne connaît pas les fonctions NI. Le jour où une erreur NI apparaît, tu sais que ça vient de ce fichier.
+MainWindow.cpp contient toute l’interface (les cinq onglets, le journal) et enchaîne les appels vers NiApi.
+Widgets.cpp contient la LED et le graphe, avec la FFT (fenêtre de Hann, résultat en dBV).
+DriverProbe.cpp teste les cartes qui ne passent pas par DAQmx (5108, 6570, 6537). Il charge directement les DLL NI sans en-tête.
+
+Tout tourne dans le thread de l’interface, avec un QTimer qui vient lire les données toutes les 50 à 100 ms. C’est volontairement plus simple que la grosse IHM, qui utilise un thread dédié.
+
+Ce que fait chaque partie
+
+Le bouton SE CONNECTER demande à NI-DAQmx la liste des cartes qu’il voit, puis leur nom (Dev1…), leur modèle, leur numéro de série, et le nombre de voies d’entrée, de sortie et de lignes numériques. C’est la vraie information que j’attends demain. Les quatre LED de l’onglet 1 se mettent au vert si la 4353, la 4480 et la 6528 sont présentes.
+
+L’onglet Écoute crée une tâche de lecture continue sur la voie choisie et vient chercher les échantillons disponibles. Deux modes :
+
+Thermocouple : pour la 4353, avec compensation de soudure froide intégrée. Tu vois la valeur en °C.
+Tension : pour la 4480. Tu vois le RMS, le pic, et une alerte de saturation si le pic dépasse 95 % de la plage. En vue Spectre, il donne la fréquence du pic.
+
+La case « Horloge matérielle » décoche l’horloge de la carte et passe en lecture à la demande, une valeur à la fois. Ça sert à diagnostiquer si la carte refuse le mode cadencé.
+
+L’onglet Numérique lit un port en lecture seule (les LED), et peut écrire sur un port de sortie (les boutons L0 à L7). C’est la seule façon ici de « envoyer un signal » : un niveau logique, ou un carré lent sur L0 généré par logiciel. Le test malin est de relier une sortie à une entrée et de voir la LED suivre.
+
+L’onglet Sortie analogique envoie une tension continue, mais seulement si une de tes cartes a des sorties analogiques. Ce n’est probablement pas le cas avec ta configuration.
+
+L’onglet Pilotes vérifie que les logiciels NI-SCOPE, niDigital et NI-HSDIO sont installés, et qu’une session s’ouvre puis se referme sur la ressource que tu tapes. Aucune sortie n’est touchée. C’est utile pour trancher entre la 6570 et la 6537 : celle dont l’ouverture réussit est celle qui est réellement branchée.
+
+Le journal et le rapport : tout ce qui se passe est écrit en bas avec l’heure. « Copier le rapport complet » rassemble la liste des cartes et le journal dans le presse-papiers, que tu colles dans la conversation.
+
+Les protections
+Les sorties sont bloquées tant que la case rouge « Autoriser les SORTIES » n’est pas cochée.
+Si l’écoute échoue trois fois de suite, elle s’arrête.
+À la fermeture de la fenêtre, toutes les tâches NI sont libérées, donc les sorties reviennent à leur état par défaut.
+Ce qui reste à vérifier demain
+
+Je n’ai pas pu tester la partie NI sur le vrai matériel, seulement la compilation. Trois points peuvent donc surprendre :
+
+Thermocouple sans horloge matérielle : le mode « à la demande » dépend de ce que la 4353 accepte. Si ça échoue, le journal contiendra le code d’erreur NI exact.
+Lecture numérique sur la 6528 : les ports d’entrée et de sortie peuvent avoir des noms ou des tailles inattendus.
+Noms de fonctions des pilotes : dans l’onglet Pilotes, si une DLL est trouvée mais pas la fonction d’ouverture, le message le dira. Ce serait une version de pilote différente de ce que j’attendais.
+
+Ce sont des cas où l’outil affiche une erreur précise, et c’est justement ce que je veux récupérer.
+
+L’ordre conseillé demain
+SE CONNECTER, puis regarde le tableau et les LED.
+Écoute avec le preset 4353 sur un thermocouple. Chauffe-le au doigt pour voir la valeur monter.
+Écoute avec le preset 4480 sur un hydrophone ou un générateur, en vue Spectre.
+Numérique : d’abord l’entrée seule, puis la sortie avec un strap vers une entrée.
+Pilotes : teste les trois DLL.
+Copie le rapport et envoie-le-moi, même si tout est vert.
+
+Si tu veux, dis-moi ce que tu ne comprends pas dans un onglet précis et je t’explique le fonctionnement interne.
